@@ -4,7 +4,7 @@
 
 1. **dsh-plugin-portfolio**：给 DeepSeek Harness（DSH）桌面版用的投资组合插件——Host 半注册 `portfolio`
    工具与只读 HTTP 路由，Client 半提供浏览器看板（配置 / 持仓 / 执行 / 任务 / 模型）；
-2. **投资文档与研究笔记**：建仓计划、估值模型确认书、组合 Review、决策纪要、宏观分析、DSH 插件开发笔记。
+2. **docs/**：投资体系文档、复盘、宏观分析、研究笔记与插件开发笔记（索引见 [docs/README.md](docs/README.md)）。
 
 > 持仓数据本身（`$DSH_HOME/storages/portfolio/portfolio.json`）与 qieman 凭据仍只在本机，不提交。
 
@@ -20,25 +20,19 @@ dsh-plugin-portfolio/     # 插件本体（bundle）
   test/                   # smoke / valuation / quotes / client 冒烟测试
   README.md               # 安装、用法、配置、开发、验证
 
-# 投资文档
-PLAN.md                           # 插件开发总说明（从 0 到 1）
-估值模型确认书.md                  # 估值口径、阈值、缺陷与验证计划
-建仓计划-方案D.md                  # 建仓规则 v3 → v5/v6 → v7 → v7.1（当前）
-操作手册-估值驱动.md               # 钱袋子 + 估值信号的执行流程
-组合Review-2026-10-29-第二轮.md
-组合Review-2026-10-29-第三轮.md
-组合模型Review-2026-10-29.md
-组合Review-2026-11-03.md
-决策纪要-2026-11-04.md             # 已定事项 / 待拍板 / 参数速查 / 时间表
-宏观周期分析-2026-11-03.md          # 全球与中国经济周期定位
-
-# 研究笔记
-research/china-macro.md           # 国内宏观底稿（69 条来源）
-research/global-macro.md          # 海外宏观底稿（60+ 条来源）
-research/market-cycle.md          # 大类资产与周期指标底稿（41 条来源）
-research/host-api.md              # DSH 插件 Host 半 API 笔记
-research/client-ui.md             # DSH 插件 Client 半与 slot 目录
-research/dev-loop.md              # 插件安装与迭代开发流程
+docs/                     # 全部文档（索引：docs/README.md）
+  README.md               # 文档索引
+  PLAN.md                 # 插件开发总说明（从 0 到 1）
+  建仓计划-方案D.md        # 建仓规则 → v7.1（当前）
+  估值模型确认书.md        # 估值口径、阈值、缺陷与验证计划
+  操作手册-估值驱动.md     # 钱袋子 + 估值信号的执行流程
+  决策纪要-2026-11-04.md   # 已定事项 / 待拍板 / 参数速查 / 时间表
+  宏观周期分析-2026-11-03.md
+  组合Review-2026-10-29-第二轮.md
+  组合Review-2026-10-29-第三轮.md
+  组合模型Review-2026-10-29.md
+  组合Review-2026-11-03.md
+  research/               # 研究笔记（宏观 3 篇 + DSH 插件 API 3 篇）
 ```
 
 ## 功能概览（插件）

@@ -1622,7 +1622,7 @@ export function apply(ctx, config = {}) {
       rule: `只在「${sellBands.join(' / ')}」且超配 >0.5pp 时卖出到目标比例；便宜资产即使超配也不卖`,
     },
     timing: '每月固定一天跑一次；买卖金额由与固定目标比例的缺口 × 档位比例决定',
-    // 组合目标 + 回测（2026-11-04 v7.1，与 建仓计划-方案D.md §13 同步）
+    // 组合目标 + 回测（2026-11-04 v7.1，与 docs/建仓计划-方案D.md §13 同步）
     portfolio: {
       capital: 300000,
       expectedReturnPct: 4.9,
