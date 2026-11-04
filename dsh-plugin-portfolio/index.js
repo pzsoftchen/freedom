@@ -21,7 +21,7 @@
  * execute + render) instead of `defineTool`.
  */
 import { analyze, formatReport } from './lib/analysis.js'
-import { DEFAULT_MCP_SERVER, DEFAULT_NAV_TOOL, fetchChina10yYield, fetchEtfQuotes, fetchKlineSeries, fetchNavSeriesMap, fetchNavs, fetchTemperature, mcpToolName, percentileRank } from './lib/quotes.js'
+import { DEFAULT_MCP_SERVER, DEFAULT_NAV_TOOL, fetchChina10yYield, fetchEtfQuotes, fetchKlineSeries, fetchNavSeriesMap, fetchNavs, fetchSinaFuturesDaily, fetchSinaUsdcnhDaily, fetchTemperature, mcpToolName, percentileRank } from './lib/quotes.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { TEMPERATURE_BANDS, capGold, classifyPosition, classifyTemperature, classifyTrend, pct, seriesMetrics, tiltDividend } from './lib/valuation.js'
@@ -682,24 +682,38 @@ export function apply(ctx, config = {}) {
         if (yieldCache && Date.now() - yieldCache.at < 6 * 60 * 60 * 1000) {
           yieldHistory = yieldCache.list
         } else {
-          try {
-            yieldHistory = await fetchChina10yYield({ pages: bondYieldPages })
-            yieldCache = { at: Date.now(), list: yieldHistory }
-          } catch (error) {
-            ctx.logger?.warn?.(`portfolio: cannot fetch 10Y yield (${String(error?.message ?? error)})`)
+          for (let attempt = 0; attempt < 2 && !yieldHistory; attempt += 1) {
+            try {
+              yieldHistory = await fetchChina10yYield({ pages: bondYieldPages })
+              yieldCache = { at: Date.now(), list: yieldHistory }
+            } catch (error) {
+              ctx.logger?.warn?.(`portfolio: 10Y yield attempt ${attempt + 1} failed (${String(error?.message ?? error)})`)
+            }
           }
         }
       }
+      let marketSourceNote = ''
       let goldPoints = null
       if (goldTrendGate && codes.includes(goldCode)) {
         if (goldCache && Date.now() - goldCache.at < 6 * 60 * 60 * 1000) {
           goldPoints = goldCache.points
         } else {
-          try {
-            goldPoints = await fetchKlineSeries(goldIndexSecid, { limit: goldLookbackLimit })
-            goldCache = { at: Date.now(), points: goldPoints }
-          } catch (error) {
-            ctx.logger?.warn?.(`portfolio: cannot fetch gold index (${String(error?.message ?? error)})`)
+          for (let attempt = 0; attempt < 2 && !goldPoints; attempt += 1) {
+            try {
+              goldPoints = await fetchKlineSeries(goldIndexSecid, { limit: goldLookbackLimit })
+              goldCache = { at: Date.now(), points: goldPoints }
+            } catch (error) {
+              ctx.logger?.warn?.(`portfolio: gold index attempt ${attempt + 1} failed (${String(error?.message ?? error)})`)
+            }
+          }
+          if (!goldPoints) {
+            try {
+              goldPoints = await fetchSinaFuturesDaily({ limit: goldLookbackLimit })
+              goldCache = { at: Date.now(), points: goldPoints }
+              marketSourceNote = '行情源切换：黄金改用新浪源（东财不可用）'
+            } catch (error) {
+              ctx.logger?.warn?.(`portfolio: gold sina fallback failed (${String(error?.message ?? error)})`)
+            }
           }
         }
       }
@@ -708,12 +722,24 @@ export function apply(ctx, config = {}) {
         if (fxCache && Date.now() - fxCache.at < 6 * 60 * 60 * 1000) {
           fxHistory = fxCache.map
         } else {
-          try {
-            const points = await fetchKlineSeries(usdcnhSecid, { limit: 260 })
-            fxHistory = new Map(points.map((point) => [point.date, point.close]))
-            fxCache = { at: Date.now(), map: fxHistory }
-          } catch (error) {
-            ctx.logger?.warn?.(`portfolio: cannot fetch FX history (${String(error?.message ?? error)})`)
+          for (let attempt = 0; attempt < 2 && !fxHistory; attempt += 1) {
+            try {
+              const points = await fetchKlineSeries(usdcnhSecid, { limit: 260 })
+              fxHistory = new Map(points.map((point) => [point.date, point.close]))
+              fxCache = { at: Date.now(), map: fxHistory }
+            } catch (error) {
+              ctx.logger?.warn?.(`portfolio: FX history attempt ${attempt + 1} failed (${String(error?.message ?? error)})`)
+            }
+          }
+          if (!fxHistory) {
+            try {
+              const points = await fetchSinaUsdcnhDaily({ limit: 320 })
+              fxHistory = new Map(points.map((point) => [point.date, point.close]))
+              fxCache = { at: Date.now(), map: fxHistory }
+              marketSourceNote = '行情源切换：汇率改用新浪源（东财不可用）'
+            } catch (error) {
+              ctx.logger?.warn?.(`portfolio: FX sina fallback failed (${String(error?.message ?? error)})`)
+            }
           }
         }
       }
@@ -737,6 +763,7 @@ export function apply(ctx, config = {}) {
       }
       const allA = temperatures?.find((row) => row.code === '000985') ?? temperatures?.[0] ?? null
       const ashare = classifyTemperature(allA?.temperature)
+      const crisisMode = Number.isFinite(allA?.temperature) && allA.temperature < trendCrisisTemperature
       const checkDividendBands = {}
       for (const code of dividendCodes) {
         const metrics = seriesMetrics(series.get(code))
@@ -745,6 +772,7 @@ export function apply(ctx, config = {}) {
       const checkTilt = effectiveTargets(doc, allA?.temperature ?? null, checkDividendBands)
       const checkTargets = checkTilt.byCode
 
+      const dataWarnings = []
       const rows = []
       for (const code of codes) {
         const rawMetrics = seriesMetrics(series.get(code))
@@ -818,7 +846,15 @@ export function apply(ctx, config = {}) {
             const drawdown3y = high3y > 0 ? (latest / high3y - 1) * 100 : null
             base = classifyPosition({ drawdownPct: drawdown3y, deviationPct: ma200 ? (latest / ma200 - 1) * 100 : null })
             goldNote = `3 年区间：距高 ${round2(drawdown3y)}%、距 200 日线 ${round2((latest / ma200 - 1) * 100)}%；趋势${trend.state}（${trend.note}）`
-            if (goldTrendGate) base = { ...base, fraction: Math.min(base.fraction, trend.cap), note: goldNote }
+            if (goldTrendGate) {
+              base = crisisMode
+                ? { ...base, note: `${goldNote}；危机例外（温度 ${round2(allA.temperature)}°<${trendCrisisTemperature}°）→ 关闭趋势折扣` }
+                : { ...base, fraction: Math.min(base.fraction, trend.cap), note: goldNote }
+            }
+          }
+          if (goldTrendGate && !(Array.isArray(goldPoints) && goldPoints.length > 220)) {
+            base = { ...base, fraction: Math.min(base.fraction, 0.375), note: `${base.note}；趋势数据缺失 → 暂按震荡上限 3/8` }
+            dataWarnings.push(`${goldCode} 黄金趋势数据获取失败，已按震荡上限 3/8 保守处理`)
           }
           band = { ...base, fraction: capGold(base.fraction), note: `${base.note}；黄金封顶 1/2${defxNote}` }
         } else if (isLongBond) {
@@ -835,6 +871,10 @@ export function apply(ctx, config = {}) {
           }
           const fraction = round2(yieldScore === null ? dmaScore : Math.min(dmaScore, yieldScore))
           const bandName = fraction >= 1 ? '收益率回升' : fraction >= 0.5 ? '收益率中性' : '收益率低位'
+          if (bondYieldSignal && !(Array.isArray(yieldHistory) && yieldHistory.length > 200)) {
+            yieldNote += '；10Y 收益率分位数据缺失，仅按 200 日线规则'
+            dataWarnings.push('10Y 国债收益率分位获取失败，长债仅按 200 日线规则')
+          }
           band = {
             band: bandName,
             fraction,
@@ -860,11 +900,22 @@ export function apply(ctx, config = {}) {
               ma200SlopePct: (ma200 / prev200 - 1) * 100,
             })
             const multiplier = overseasTrendLevels[trend.state] ?? 1
-            base = {
-              band: base.band,
-              fraction: round2(base.fraction * multiplier),
-              note: `${base.note}；趋势${trend.state} → 比例 ×${multiplier}`,
-            }
+            base = crisisMode
+              ? {
+                  band: base.band,
+                  fraction: base.fraction,
+                  note: `${base.note}；危机例外（温度 ${round2(allA.temperature)}°<${trendCrisisTemperature}°）→ 关闭趋势折扣`,
+                }
+              : {
+                  band: base.band,
+                  fraction: round2(base.fraction * multiplier),
+                  note: `${base.note}；趋势${trend.state} → 比例 ×${multiplier}`,
+                }
+          }
+          if (overseasTrendGate && !(Array.isArray(adjustedSeries) && adjustedSeries.length > 220)) {
+            const multiplier = overseasTrendLevels['震荡'] ?? 0.8
+            base = { ...base, fraction: round2(base.fraction * multiplier), note: `${base.note}；趋势数据缺失 → 暂按震荡 ×${multiplier}` }
+            dataWarnings.push(`${code} 趋势/汇率数据获取失败，已按震荡 ×${multiplier} 保守处理`)
           }
           band = { ...base, note: `${base.note}${defxNote}` }
         } else {
@@ -1188,6 +1239,7 @@ export function apply(ctx, config = {}) {
       temperature: allA,
       ashare,
       buys: buys.map((row) => ({ code: row.code, name: row.name, band: row.band, amount: row.amount })),
+      dataWarnings: marketSourceNote ? [`${marketSourceNote}（数据已自动切换，结果可信）`, ...dataWarnings] : dataWarnings,
       sells: sells.map((row) => ({ code: row.code, name: row.name, band: row.band, amount: row.amount, reason: row.reason })),
       totalBuy,
       totalSell: round2(sells.reduce((sum, row) => sum + row.amount, 0)),
@@ -1226,6 +1278,7 @@ export function apply(ctx, config = {}) {
         temperature: allA,
         ashare,
         dividend: checkTilt.meta,
+        dataWarnings: marketSourceNote ? [`${marketSourceNote}（数据已自动切换，结果可信）`, ...dataWarnings] : dataWarnings,
         layers: {
           strategicPct: round2(rows.reduce((sum, row) => sum + (row.targetPct ?? 0), 0)),
           tacticalOverlayPp: round2(rows.reduce((sum, row) => sum + (tacticalBandPp[categoryOfCode(row.code)] || 0), 0)),
@@ -1622,23 +1675,23 @@ export function apply(ctx, config = {}) {
       rule: `只在「${sellBands.join(' / ')}」且超配 >0.5pp 时卖出到目标比例；便宜资产即使超配也不卖`,
     },
     timing: '每月固定一天跑一次；买卖金额由与固定目标比例的缺口 × 档位比例决定',
-    // 组合目标 + 回测（2026-11-04 v7.1，与 docs/建仓计划-方案D.md §13 同步）
+    // 组合目标 + 回测（2026-11-04 v7.2：合并 001180→162412、000369→006327，15 只；与 docs/建仓计划-方案D.md §14 同步）
     portfolio: {
       capital: 300000,
       expectedReturnPct: 4.9,
       drawdownBudgetPct: 20,
       effectiveNote:
-        '当前温度 8.34°：红利 tilt 被"自身位置偏高"阻断（008163/020602 高于 200 日线约 4%），实际 红利 28% / 债券 39%；若两只红利回到 200 日线下方，自动顶到 红利 30% / 债券 37%',
+        '红利基准 28%（温度<10° 可到 30%，温度>50° 压回 24%，且任一只红利位置偏高/贵时 tilt 被阻断）；债券 39%；目标权重锁定 12 个月，只允许红利随温度在 24–30% 内调节',
       layers: [
         { name: '红利', weight: 28, codes: '100032 9 ｜ 008163 7 ｜ 009051 6 ｜ 020602 6（温度<10° 可到 30）' },
-        { name: 'A股其他', weight: 13, codes: '022424 6 ｜ 000248 3 ｜ 001180 2 ｜ 162412 2' },
-        { name: '海外', weight: 10, codes: '050025 4 ｜ 000071 2 ｜ 006327 2.5 ｜ 000369 1.5（优先场内 513500/513050）' },
+        { name: 'A股其他', weight: 13, codes: '022424 6 ｜ 000248 3 ｜ 162412 4（001180 已并入）' },
+        { name: '海外', weight: 10, codes: '050025 4 ｜ 000071 2 ｜ 006327 4（000369 已并入；优先场内 513500/513050）' },
         { name: '黄金', weight: 5, codes: '000216 5（单次封顶 1/2）' },
         { name: '债券', weight: 39, codes: '007169 28 ｜ 003376 6 ｜ 001257 5' },
         { name: '现金', weight: 5, codes: '000509 5' },
       ],
       note:
-        'v7.1 动态规则：权益随温度在 56%（<10°）→24%（>70°）之间调整；现金 5%–25%；黄金固定 5%；只卖"贵"的、便宜多买；权重锁定 12 个月，只允许红利 24–30% 随温度调节',
+        'v7.2（15 只）：固定目标权重 + 红利随温度 24–30% 调节 + 动态现金目标（<10° 5%、10–30° 10%、30–50° 20%、>50° 35%）；黄金固定 5%；只卖"贵"的、便宜多买。估值优先，趋势只控制单次节奏；温度<5° 危机例外关闭趋势折扣。',
     },
     backtest: {
       window: '2021-11-02 ~ 2026-11-03（近 5 年，目标权重静态持有、未再平衡，不含现金）',
@@ -1648,13 +1701,64 @@ export function apply(ctx, config = {}) {
       sharpe: 0.1,
       compare: 'v7（债券 41 / 黄金 6 / 海外 12）同期：年化 4.01%、最大回撤 −7.55%。回测奖励过去 5 年的债券/黄金赢家，v7.1 是前瞻调整——不要用回测选权重。',
       stress: [
-        { scenario: 'S1 全球 risk-off（股 −25~−35%、金 −20%、债 −4.5%）', value: -18.2 },
-        { scenario: 'S2 利率 +200bp', value: -1.7 },
-        { scenario: 'S3 A股 −30%', value: -12.9 },
-        { scenario: 'S5 股债双杀（A −25 / 海 −20 / 债 −4）', value: -15.0 },
+        { scenario: 'S1 全球 risk-off（假设：股 −25~−35%、金 −20%、债 −4.5%）', value: -17.8, kind: 'assumption' },
+        { scenario: 'S2 利率 +200bp', value: -1.7, kind: 'assumption' },
+        { scenario: 'S3 A股 −30%', value: -12.9, kind: 'assumption' },
+        { scenario: 'S5 股债双杀（A −25 / 海 −20 / 债 −4）', value: -15.0, kind: 'assumption' },
+        { scenario: '【历史】2008 式：A股 −70 / 红利 −30 / 海外 −50 / 金 −20 / 债 −4.5', value: -25.3, kind: 'history' },
+        { scenario: '【历史】2015+2022 式：A股 −45 / 红利 −35 / 海外 −35 / 金 −30 / 债 −4', value: -22.2, kind: 'history' },
+        { scenario: '【历史】中概 −70 / 恒生 −65 情形', value: -27.3, kind: 'history' },
       ],
+      forecast: (() => {
+        const capital = 300000
+        const layers = [
+          { name: '红利', weight: 28, expectedPct: 7.0, low: 5.5, high: 8.5, basis: '股息率约 5% + 盈利增长 2% + 估值分位极低' },
+          { name: 'A股其他', weight: 13, expectedPct: 8.0, low: 5.0, high: 11.0, basis: '盈利增长 + 估值回归（PE 分位 <5%）' },
+          { name: '海外', weight: 10, expectedPct: 6.0, low: 3.0, high: 9.0, basis: '标普盈利增长 + 中概/恒生修复' },
+          { name: '黄金', weight: 5, expectedPct: 2.5, low: 0.0, high: 5.0, basis: '无息资产，央行购金支撑' },
+          { name: '债券', weight: 39, expectedPct: 2.0, low: 1.5, high: 3.0, basis: '10Y 1.62% 为锚，信用/久期小幅增强' },
+          { name: '现金', weight: 5, expectedPct: 1.2, low: 0.8, high: 1.6, basis: '货基/盈米宝' },
+        ].map((row) => ({
+          ...row,
+          amount: round2((row.weight / 100) * capital),
+          annualAmount: round2((row.weight / 100) * capital * (row.expectedPct / 100)),
+          lowAmount: round2((row.weight / 100) * capital * (row.low / 100)),
+          highAmount: round2((row.weight / 100) * capital * (row.high / 100)),
+        }))
+        const weighted = (key) => round2(layers.reduce((sum, row) => sum + (row.weight / 100) * row[key], 0))
+        const expectedPct = round2(weighted('expectedPct'))
+        const lowPct = round2(weighted('low'))
+        const highPct = round2(weighted('high'))
+        const compound = (ratePct, years) => round2(capital * (Math.pow(1 + ratePct / 100, years) - 1))
+        return {
+          capital,
+          method: '分层期望收益加权：股息/盈利增长/到期收益率 + 估值回归，未用回测外推',
+          layers,
+          expectedPct,
+          lowPct,
+          highPct,
+          annualAmount: round2((capital * expectedPct) / 100),
+          annualLowAmount: round2((capital * lowPct) / 100),
+          annualHighAmount: round2((capital * highPct) / 100),
+          cumulative5y: {
+            lowPct: round2((Math.pow(1 + lowPct / 100, 5) - 1) * 100),
+            basePct: round2((Math.pow(1 + expectedPct / 100, 5) - 1) * 100),
+            highPct: round2((Math.pow(1 + highPct / 100, 5) - 1) * 100),
+          },
+          cumulative5yAmount: {
+            low: compound(lowPct, 5),
+            base: compound(expectedPct, 5),
+            high: compound(highPct, 5),
+          },
+          compare: '10Y 国债 1.62% / 3 年定存 1.65% 为无风险参照，超额 3.0~4.6pp 是承担 51% 权益波动的补偿',
+          note:
+            '金额按 30 万本金、静态权重测算；假设驱动，误差约 ±1.5pp；实际路径取决于估值回归节奏（尤其 A股/中概），不是承诺。'
+            + ' 若未来 10Y 国债回到 3%，债券端期望会被动升到 4%+，请以每年复核为准。',
+        }
+      })(),
       note:
-        '4 只基金用表征指数代理（050025/006327/000369→885065；020602/022424 早期→H11021）；压力测试为估算，历史回撤不代表未来。',
+        '4 只基金用表征指数代理（050025/006327/000369→885065；020602/022424 早期→H11021）；压力测试为估算，历史回撤不代表未来。'
+        + ' 历史最差路径约 −22% ~ −25%（中概极端 −27%），已接受：−20% 是常态预算，极端行情允许超；不因此改规则（照样便宜多买）。',
     },
   })
 
@@ -2340,6 +2444,8 @@ export function apply(ctx, config = {}) {
       : {}),
   }
   const overseasTrendGate = config?.overseasTrendGate !== false
+  // 危机例外：温度低于该值时关闭趋势折扣（估值优先，趋势只控制单次节奏）
+  const trendCrisisTemperature = Number.isFinite(config?.trendCrisisTemperature) ? config.trendCrisisTemperature : 5
   // 横截面优先买：越便宜的档位，分到的预算越多（借自长赢"挑最便宜的买"）。
   const BAND_PRIORITY = {
     极低估: 1.6,

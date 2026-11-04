@@ -55,6 +55,7 @@ export function analyze(doc, options = {}) {
       prevPrice,
       prevPriceDate: typeof holding.prevPriceDate === 'string' ? holding.prevPriceDate : null,
       dayChange: prevPrice !== null && price !== null ? round(price - prevPrice, 4) : null,
+      dayPnl: prevPrice !== null && price !== null ? round((price - prevPrice) * (Number(holding.units) || 0)) : null,
       dayChangePct:
         prevPrice !== null && price !== null && prevPrice !== 0 ? round(((price - prevPrice) / prevPrice) * 100) : null,
       costPrice: Number.isFinite(holding.costPrice) ? holding.costPrice : null,

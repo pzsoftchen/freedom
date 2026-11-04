@@ -126,7 +126,7 @@ const ctx = {
     })
   },
 }
-plugin.apply(ctx, { dataFile, staleAfterDays: 30, equityCapPct: 200, tacticalBandPp: { 'A股': 200, '海外': 200, '黄金': 200 }, dynamicCashTarget: false, defxCodes: [], goldTrendGate: false, bondYieldSignal: false })
+plugin.apply(ctx, { dataFile, staleAfterDays: 30, equityCapPct: 200, tacticalBandPp: { 'A股': 200, '海外': 200, '黄金': 200 }, dynamicCashTarget: false, defxCodes: [] })
 assert.equal(registrations.length, 1, 'apply must register exactly one tool')
 assert.equal(routes.length, 12, 'apply must register summary, refresh, check, rebalance, quotes, execute, transfer, orders, executions, weekly, activity and history routes')
 const summaryRoute = routes.find((route) => route.path === '/portfolio/api/summary')
@@ -448,12 +448,21 @@ assert.ok(summaryValue.model, 'summary payload carries the valuation rules')
 assert.equal(summaryValue.model.temperature.bands.length, 5, 'five A-share temperature bands')
 assert.ok(summaryValue.model.temperature.hysteresis.includes('整数边界'), 'band switching rule is exposed without a conflicting stop threshold')
 assert.equal(summaryValue.model.position.bands.length, 6, 'six position bands')
+assert.ok(summaryValue.model.sell.bands.includes('贵'), 'sell rule lists expensive bands only')
+assert.ok(summaryValue.model.special.length >= 3, 'special rules (gold/long bond/short bond) are exposed')
 assert.ok(summaryValue.model.gold && summaryValue.model.gold.rules.length === 3, 'gold trend rules are exposed')
 assert.ok(summaryValue.model.overseas && summaryValue.model.overseas.rules.length === 3, 'overseas trend multipliers are exposed')
 assert.ok(summaryValue.model.bonds && summaryValue.model.bonds.longBands.length === 3, 'bond yield bands are exposed')
 assert.ok(summaryValue.model.cash && summaryValue.model.cash.bands.length === 4, 'dynamic cash targets are exposed')
-assert.ok(summaryValue.model.sell.bands.includes('贵'), 'sell rule lists expensive bands only')
-assert.ok(summaryValue.model.special.length >= 3, 'special rules (gold/long bond/short bond) are exposed')
+assert.ok(summaryValue.model.backtest.stress.length >= 7, 'stress scenarios include historical paths')
+assert.ok(summaryValue.model.backtest.stress.some((row) => row.kind === 'history'), 'at least one historical path exists')
+const forecast = summaryValue.model.backtest.forecast
+assert.ok(forecast && forecast.layers.length === 6, 'forward return forecast is exposed')
+assert.equal(forecast.layers.reduce((sum, row) => sum + row.weight, 0), 100, 'forecast layers sum to 100%')
+assert.ok(forecast.lowPct <= forecast.expectedPct && forecast.expectedPct <= forecast.highPct, 'forecast range is ordered')
+assert.equal(forecast.capital, 300000, 'forecast is based on the 30万 capital base')
+assert.ok(forecast.annualAmount > 0 && forecast.cumulative5yAmount.base > 0, 'forecast carries yuan amounts')
+assert.ok(summaryValue.rows.every((row) => 'dayPnl' in row), 'each holding carries a day P&L amount')
 assert.ok(plan161725.category, 'plan rows carry a category for the grouped panel')
 assert.equal(plan161725.category, 'A股', 'a domestic equity sleeve is grouped under A股')
 const heldRow = summaryValue.plan.rows.find((row) => row.code === '110011')
@@ -501,7 +510,7 @@ async function applyTo(file, config) {
         },
       }),
   }
-  plugin.apply(localCtx, { dataFile: file, staleAfterDays: 7, dynamicCashTarget: false, defxCodes: [], goldTrendGate: false, bondYieldSignal: false, ...config })
+  plugin.apply(localCtx, { dataFile: file, staleAfterDays: 7, dynamicCashTarget: false, defxCodes: [], ...config })
   return { tool: seen[0], routes: localRoutes }
 }
 
@@ -744,6 +753,56 @@ assert.ok(transferred && transferred.units > 0, 'the target sleeve receives shar
 const cashAfterTransfer = afterTransferFill.holdings.find((holding) => holding.kind === 'cash')
 assert.equal(cashAfterTransfer.units, 800, 'the cash basket pays for the transfer')
 await rm(dir5, { recursive: true, force: true })
+
+
+// 25. Data-quality fallback: when trend/FX data cannot be fetched, the check
+//     must not silently drop the gate — it reports the problem and falls back.
+const dirQ = await mkdtemp(join(tmpdir(), 'portfolio-quality-'))
+const qualityFile = join(dirQ, 'quality.json')
+await writeFile(
+  qualityFile,
+  JSON.stringify({
+    version: 1,
+    currency: 'CNY',
+    holdings: [
+      { code: '110011', name: '易方达中小盘', kind: 'fund', units: 100, costPrice: 7, price: 8, prevPrice: 7.9 },
+      { code: '007169', name: '短债', kind: 'bond', units: 1000, costPrice: 1, price: 1.01 },
+      { code: 'CASH', name: '钱袋子', kind: 'cash', units: 1000, costPrice: 1, price: 1 },
+    ],
+    targets: { byCode: { '110011': 40, '007169': 40, CASH: 5 }, byKind: {} },
+    snapshots: [],
+    orders: [],
+  }),
+)
+const qualityApp = await applyTo(qualityFile, {
+  goldTrendGate: true,
+  goldCode: '110011',
+  overseasTrendGate: true,
+  defxCodes: ['110011'],
+  bondYieldSignal: true,
+})
+const qualityCheck = qualityApp.routes.find((route) => route.path === '/portfolio/api/check')
+const realFetch = globalThis.fetch
+globalThis.fetch = async () => {
+  throw new Error('offline')
+}
+let qualityStatus
+let qualityBody
+await qualityCheck.handler({ method: 'GET' }, {
+  writeHead(code) {
+    qualityStatus = code
+  },
+  end(payload) {
+    qualityBody = payload
+  },
+})
+globalThis.fetch = realFetch
+assert.equal(qualityStatus, 200, 'check still succeeds when external data is offline')
+const qualityValue = JSON.parse(qualityBody).value
+assert.ok(Array.isArray(qualityValue.dataWarnings) && qualityValue.dataWarnings.length > 0, 'offline data is reported')
+const qualityRow = qualityValue.rows.find((row) => row.code === '110011')
+assert.ok((qualityRow?.note ?? '').includes('数据缺失'), 'fallback is explained on the row')
+await rm(dirQ, { recursive: true, force: true })
 
 await rm(dir4, { recursive: true, force: true })
 

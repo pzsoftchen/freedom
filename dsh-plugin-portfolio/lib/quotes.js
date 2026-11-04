@@ -487,3 +487,58 @@ export function percentileRank(values, value) {
   const below = list.filter((item) => item < value).length
   return (below / list.length) * 100
 }
+
+/** Parse a Sina JSONP payload of the form `var x=(...);` into its value. */
+function parseSinaJsonp(text) {
+  const match = String(text).match(/var\s+\w+\s*=\s*\(([\s\S]*)\)\s*;?\s*$/)
+  return match ? match[1] : null
+}
+
+/**
+ * Daily closes for a global futures contract (Sina). GC = COMEX gold.
+ * Fallback for Eastmoney's push2his kline host.
+ * @param {{limit?: number}} options
+ */
+export async function fetchSinaFuturesDaily(options = {}) {
+  const limit = Number.isFinite(options.limit) ? options.limit : 760
+  const url = 'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20t=/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=GC'
+  const response = await fetch(url, {
+    headers: { referer: 'https://finance.sina.com.cn', 'user-agent': 'Mozilla/5.0' },
+    signal: AbortSignal.timeout(12_000),
+  })
+  if (!response.ok) throw new Error(`sina futures HTTP ${response.status}`)
+  const body = parseSinaJsonp(await response.text())
+  if (!body) throw new Error('sina futures payload missing')
+  const rows = JSON.parse(body)
+  return rows
+    .map((row) => ({ date: String(row.date ?? ''), close: Number(row.close) }))
+    .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.close) && point.close > 0)
+    .slice(-limit)
+}
+
+/**
+ * Daily closes for USDCNH (Sina forex). Format: `date,open,high,low,close|...`.
+ * Fallback for Eastmoney's push2his kline host.
+ * @param {{limit?: number}} options
+ */
+export async function fetchSinaUsdcnhDaily(options = {}) {
+  const limit = Number.isFinite(options.limit) ? options.limit : 320
+  const url =
+    'https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20t=/NewForexService.getDayKLine?symbol=fx_susdcnh'
+  const response = await fetch(url, {
+    headers: { referer: 'https://finance.sina.com.cn', 'user-agent': 'Mozilla/5.0' },
+    signal: AbortSignal.timeout(12_000),
+  })
+  if (!response.ok) throw new Error(`sina forex HTTP ${response.status}`)
+  const body = parseSinaJsonp(await response.text())
+  if (!body) throw new Error('sina forex payload missing')
+  const text = JSON.parse(body)
+  return String(text)
+    .split('|')
+    .map((line) => {
+      const [date, , , , close] = line.split(',')
+      return { date, close: Number(close) }
+    })
+    .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.close) && point.close > 0)
+    .slice(-limit)
+}

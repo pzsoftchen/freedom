@@ -97,4 +97,19 @@ assert.equal(percentileRank([1, 2, 3, 4], 3), 50, 'percentile rank counts values
 assert.equal(percentileRank([1, 2, 3, 4], 5), 100)
 assert.equal(percentileRank([], 3), null)
 
+// --- Sina fallback parsers (stubbed JSONP)
+globalThis.fetch = async (url) => {
+  const body = String(url).includes('GlobalFutures')
+    ? '/*<script>location.href=\'//sina.com\';</script>*/ var t=([{"date":"2026-11-03","close":"3966.5"},{"date":"2026-11-04","close":"3978.2"}]);'
+    : '/*<script></script>*/ var t=("2026-11-02,6.70,6.71,6.68,6.69,|2026-11-03,6.69,6.70,6.66,6.6699,");'
+  return { ok: true, async text() { return body } }
+}
+const { fetchSinaFuturesDaily, fetchSinaUsdcnhDaily } = await import('../lib/quotes.js')
+const sinaGold = await fetchSinaFuturesDaily({ limit: 10 })
+const sinaFx = await fetchSinaUsdcnhDaily({ limit: 10 })
+assert.equal(sinaGold.length, 2)
+assert.ok(Math.abs(sinaGold[1].close - 3978.2) < 1e-9)
+assert.equal(sinaFx.length, 2)
+assert.ok(Math.abs(sinaFx[1].close - 6.6699) < 1e-9)
+
 console.log('portfolio quotes test OK — text rendering, JSON fallback, date normalization, intraday quotes, kline history and percentile')

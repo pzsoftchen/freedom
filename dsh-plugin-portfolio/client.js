@@ -75,6 +75,45 @@ window.__ModuleLoader__.load({
         fontSize: 11.5,
         whiteSpace: 'nowrap',
       },
+      dashGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 8,
+        marginBottom: 8,
+      },
+      dashCard: {
+        border: `1px solid ${color.border}`,
+        borderRadius: 10,
+        padding: '8px 10px',
+        background: color.surface,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      },
+      dashHead: { display: 'flex', alignItems: 'center', gap: 6, color: color.secondary, fontSize: 11 },
+      dashValue: { fontSize: 16, fontWeight: 600, lineHeight: 1.2 },
+      dashSub: { fontSize: 10.5, color: color.faint },
+      ringWrap: { display: 'flex', alignItems: 'center', gap: 8 },
+      gaugeTrack: {
+        height: 6,
+        borderRadius: 3,
+        background: `linear-gradient(90deg, #5b8def 0%, #4fb477 35%, #e5b94e 65%, #e06c5a 100%)`,
+        position: 'relative',
+        margin: '6px 0 2px',
+      },
+      gaugeMarker: { position: 'absolute', top: -3, width: 2, height: 12, background: color.text, borderRadius: 1 },
+      bulletTrack: { height: 6, borderRadius: 3, background: color.subtle, position: 'relative', overflow: 'hidden' },
+      bulletFill: { height: '100%', background: color.brand, borderRadius: 3 },
+      bulletTick: { position: 'absolute', top: -2, width: 2, height: 10, background: color.text, opacity: 0.6 },
+      chips: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+      chip: {
+        fontSize: 10.5,
+        color: color.secondary,
+        border: `1px solid ${color.border}`,
+        borderRadius: 999,
+        padding: '2px 8px',
+        background: color.surface,
+      },
       statusStrip: {
         display: 'flex',
         gap: 12,
@@ -241,19 +280,11 @@ window.__ModuleLoader__.load({
         'div',
         { style: styles.cards },
         h(StatCard, { label: '总市值', value: money(totals.value) }),
-        h(StatCard, {
-          label: `当日盈亏（${pct(totals.dayChangePct)}）`,
-          value: money(totals.dayChange),
-          tone: signedColor(totals.dayChange),
-        }),
+        h(StatCard, { label: '投入成本', value: money(totals.cost) }),
         h(StatCard, {
           label: `浮动盈亏（${pct(totals.pnlPct)}）`,
           value: money(totals.pnl),
           tone: signedColor(totals.pnl),
-        }),
-        h(StatCard, {
-          label: '建仓进度',
-          value: plan ? `${plan.progress}%（${plan.heldCount}/${plan.targetCount}）` : '—',
         }),
       )
     }
@@ -390,7 +421,7 @@ window.__ModuleLoader__.load({
           h(
             'tr',
             null,
-            ['代码', '名称', '前日净值', '今日净值', '涨跌(净值)', '实时参考', '市值', '盈亏', '权重'].map((label) =>
+            ['代码', '名称', '前日净值', '今日净值', '涨跌(净值)', '当日盈亏(元)', '实时参考', '市值', '盈亏', '权重'].map((label) =>
               h('th', { key: label, style: styles.th }, label),
             ),
           ),
@@ -429,6 +460,11 @@ window.__ModuleLoader__.load({
               ),
               h(
                 'td',
+                { style: { ...styles.td, color: signedColor(row.dayPnl) } },
+                row.dayPnl === null || row.dayPnl === undefined ? '—' : `${row.dayPnl > 0 ? '+' : ''}${money(row.dayPnl)}`,
+              ),
+              h(
+                'td',
                 { style: styles.td },
                 quoteByCode?.[row.code]?.estimate === null || quoteByCode?.[row.code]?.estimate === undefined
                   ? quoteByCode?.[row.code]?.price === null || quoteByCode?.[row.code]?.price === undefined
@@ -445,13 +481,6 @@ window.__ModuleLoader__.load({
                         quoteByCode[row.code].changePct
                       }%，${quoteByCode[row.code].source === 'index' ? '指数估' : 'ETF代理'}）`,
                     ),
-              ),
-              h(
-                'td',
-                { style: { ...styles.td, color: signedColor(row.dayChange) } },
-                row.dayChange === null || row.dayChange === undefined
-                  ? '—'
-                  : `${row.dayChange > 0 ? '+' : ''}${row.dayChange}（${row.dayChangePct > 0 ? '+' : ''}${row.dayChangePct}%）`,
               ),
               h('td', { style: styles.td }, money(row.value)),
               h('td', { style: { ...styles.td, color: signedColor(row.pnl) } }, `${money(row.pnl)}（${pct(row.pnlPct)}）`),
@@ -534,19 +563,65 @@ window.__ModuleLoader__.load({
                 { style: styles.notice },
                 `${model.backtest.window}：年化 ${model.backtest.annualizedPct}% ｜ 最大回撤 ${model.backtest.maxDrawdownPct}% ｜ 波动 ${model.backtest.volatilityPct}% ｜ 夏普 ${model.backtest.sharpe}`,
               ),
+              model.backtest.forecast
+                ? h(
+                    'div',
+                    { style: { marginTop: 10 } },
+                    h('div', { style: styles.sectionTitle }, '收益预测（分层加权，非回测外推）'),
+                    h(
+                      'div',
+                      { style: styles.notice },
+                      `本金 ${money(model.backtest.forecast.capital)}｜期望年化 ${model.backtest.forecast.expectedPct}% ≈ **${money(
+                        model.backtest.forecast.annualAmount,
+                      )}/年**（区间 ${model.backtest.forecast.lowPct}%~${model.backtest.forecast.highPct}% ≈ ${money(
+                        model.backtest.forecast.annualLowAmount,
+                      )}~${money(model.backtest.forecast.annualHighAmount)}/年）｜5 年累计 ≈ ${money(
+                        model.backtest.forecast.cumulative5yAmount.low,
+                      )} / ${money(model.backtest.forecast.cumulative5yAmount.base)} / ${money(
+                        model.backtest.forecast.cumulative5yAmount.high,
+                      )}（低/中/高）`,
+                    ),
+                    h(
+                      'table',
+                      { style: styles.table },
+                      h('thead', null, h('tr', null,
+                        ['层', '权重', '金额', '期望年化', '年收益', '区间', '依据'].map((label) => h('th', { key: label, style: styles.th }, label)),
+                      )),
+                      h('tbody', null,
+                        model.backtest.forecast.layers.map((row) =>
+                          h('tr', { key: row.name },
+                            h('td', { style: styles.td }, row.name),
+                            h('td', { style: styles.td }, `${row.weight}%`),
+                            h('td', { style: styles.td }, money(row.amount)),
+                            h('td', { style: styles.td }, `${row.expectedPct}%`),
+                            h('td', { style: styles.td }, `${money(row.annualAmount)}/年`),
+                            h('td', { style: styles.td }, `${row.low}% ~ ${row.high}%`),
+                            h('td', { style: styles.td }, row.basis),
+                          ),
+                        ),
+                      ),
+                    ),
+                    h('div', { style: { ...styles.notice, margin: '6px 0 12px' } }, model.backtest.forecast.compare),
+                    h('div', { style: { ...styles.notice, margin: '0 0 12px', color: color.faint } }, model.backtest.forecast.note),
+                  )
+                : null,
               h(
                 'table',
                 { style: styles.table },
                 h('thead', null, h('tr', null,
-                  ['情景', '组合回撤'].map((label) => h('th', { key: label, style: styles.th }, label)),
+                  ['情景', '组合回撤', '30 万浮亏', '50 万浮亏'].map((label) => h('th', { key: label, style: styles.th }, label)),
                 )),
                 h('tbody', null,
-                  model.backtest.stress.map((row) =>
-                    h('tr', { key: row.scenario },
+                  model.backtest.stress.map((row) => {
+                    const absolute30 = Math.round((row.value / 100) * 300000)
+                    const absolute50 = Math.round((row.value / 100) * 500000)
+                    return h('tr', { key: row.scenario },
                       h('td', { style: styles.td }, row.scenario),
                       h('td', { style: styles.td }, `${row.value}%`),
-                    ),
-                  ),
+                      h('td', { style: styles.td }, `${absolute30 < 0 ? '-' : ''}${Math.abs(absolute30).toLocaleString('zh-CN')}`),
+                      h('td', { style: styles.td }, `${absolute50 < 0 ? '-' : ''}${Math.abs(absolute50).toLocaleString('zh-CN')}`),
+                    )
+                  }),
                 ),
               ),
               h('div', { style: { ...styles.notice, margin: '6px 0 12px' } }, model.backtest.note),
@@ -731,6 +806,13 @@ window.__ModuleLoader__.load({
             data?.ashare?.band ?? '—'
           }；建议买入合计 ${money(data?.totalBuy)}${data?.capped ? '（受钱袋子/上限约束）' : ''}`,
         ),
+        Array.isArray(data?.dataWarnings) && data.dataWarnings.length > 0
+          ? h(
+              'div',
+              { style: { ...styles.notice, marginBottom: 8, color: '#b45309' } },
+              `数据提示：${data.dataWarnings.join('；')}`,
+            )
+          : null,
         note ? h('div', { style: { ...styles.notice, marginBottom: 8 } }, note) : null,
         h(
           'table',
@@ -1226,6 +1308,129 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function TopDashboard({ plan, value, quotesAt }) {
+      if (!plan) return null
+      const lastCheck = value?.lastCheck ?? null
+      const temperature = Number.isFinite(lastCheck?.temperature?.temperature) ? lastCheck.temperature.temperature : null
+      const temperatureBand = lastCheck?.ashare?.band ?? '—'
+      const progress = Number.isFinite(plan.progress) ? plan.progress : 0
+      const targetCapital = Number.isFinite(plan.targetCapital) ? plan.targetCapital : null
+      const wallet = Number.isFinite(plan.cash?.spendable) ? plan.cash.spendable : 0
+      const planCash = Number.isFinite(plan.cash?.value) ? plan.cash.value - wallet : 0
+      const spendable = Number.isFinite(plan.cash?.value) ? plan.cash.value : wallet
+      const totalValue = Number.isFinite(plan.value) ? plan.value : 0
+      const cashPct = totalValue > 0 ? (spendable / totalValue) * 100 : 0
+      const dayPnl = Number.isFinite(value?.totals?.dayChange) ? value.totals.dayChange : null
+      const dayPnlPct = Number.isFinite(value?.totals?.dayChangePct) ? value.totals.dayChangePct : null
+      const pending = value?.orders?.pending?.length ?? 0
+      const rounds = value?.deployment?.doneRounds ?? null
+      const ringRadius = 22
+      const circumference = 2 * Math.PI * ringRadius
+      const ring = h(
+        'svg',
+        { width: 58, height: 58, viewBox: '0 0 58 58', role: 'img', 'aria-label': `建仓进度 ${pct(progress)}` },
+        h('circle', { cx: 29, cy: 29, r: ringRadius, fill: 'none', stroke: color.subtle, strokeWidth: 6 }),
+        h('circle', {
+          cx: 29,
+          cy: 29,
+          r: ringRadius,
+          fill: 'none',
+          stroke: color.brand,
+          strokeWidth: 6,
+          strokeLinecap: 'round',
+          strokeDasharray: `${(circumference * Math.min(100, Math.max(0, progress))) / 100} ${circumference}`,
+          transform: 'rotate(-90 29 29)',
+        }),
+      )
+      const gauge =
+        temperature === null
+          ? h('div', { style: styles.dashSub }, '温度未知（先跑一次估值体检）')
+          : h(
+              'div',
+              null,
+              h(
+                'div',
+                { style: styles.gaugeTrack },
+                h('div', { style: { ...styles.gaugeMarker, left: `calc(${Math.min(100, Math.max(0, temperature))}% - 1px)` } }),
+              ),
+              h('div', { style: styles.dashSub }, `${temperature.toFixed(2)}° · ${temperatureBand}`),
+            )
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { style: styles.dashGrid },
+          h(
+            'div',
+            { style: styles.dashCard },
+            h('div', { style: styles.dashHead }, '建仓进度'),
+            h(
+              'div',
+              { style: styles.ringWrap },
+              ring,
+              h(
+                'div',
+                null,
+                h('div', { style: styles.dashValue }, pct(progress)),
+                h('div', { style: styles.dashSub }, targetCapital ? `目标 ${money(targetCapital)}` : '目标未设'),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { style: styles.dashCard },
+            h('div', { style: styles.dashHead }, 'A股温度（中证全A）'),
+            gauge,
+          ),
+          h(
+            'div',
+            { style: { ...styles.dashCard }, title: `现金合计 ${money(spendable)}：盈米宝可直接申购，组合钱袋子在组合内等平台调仓` },
+            h('div', { style: styles.dashHead }, '可投弹药（盈米宝）'),
+            h('div', { style: styles.dashValue }, money(spendable)),
+            h('div', { style: styles.dashSub }, `盈米宝 ${money(wallet)} + 钱袋子 ${money(planCash)}`),
+            h(
+              'div',
+              { style: styles.bulletTrack },
+              h('div', { style: { ...styles.bulletFill, width: `${Math.min(100, cashPct)}%` } }),
+              h('div', { style: { ...styles.bulletTick, left: `calc(${Math.min(100, plan.cash?.targetPct ?? 5)}% - 1px)` } }),
+            ),
+            h('div', { style: styles.dashSub }, `可动用 ${money(plan.cash?.available ?? wallet)}（盈米宝）｜现金占比 ${pct(cashPct)}（目标 ${pct(plan.cash?.targetPct ?? 5)}）`),
+          ),
+          h(
+            'div',
+            { style: { ...styles.dashCard, title: `前日净值口径：${money(dayPnl)}` } },
+            h('div', { style: styles.dashHead }, '当日盈亏'),
+            h(
+              'div',
+              { style: { ...styles.dashValue, color: signedColor(dayPnl) } },
+              dayPnl === null ? '—' : `${dayPnl > 0 ? '+' : ''}${money(dayPnl)}`,
+            ),
+            h('div', { style: { ...styles.dashSub, color: signedColor(dayPnl) } }, dayPnlPct === null ? '' : `${pct(dayPnlPct)}（净值口径）`),
+          ),
+        ),
+        h(
+          'div',
+          { style: styles.chips },
+          h('span', { style: styles.chip }, plan.building ? '建仓期：只买不卖' : '已建仓：可双向收敛'),
+          pending > 0 ? h('span', { style: { ...styles.chip, color: color.up } }, `待确认 ${pending} 笔`) : null,
+          rounds !== null ? h('span', { style: styles.chip }, `已执行 ${rounds} 批`) : null,
+          value?.generatedAt
+            ? h('span', { style: styles.chip }, `数据 ${new Date(value.generatedAt).toLocaleTimeString('zh-CN', { hour12: false })}`)
+            : null,
+          quotesAt
+            ? h('span', { style: styles.chip }, `实时参考 ${new Date(quotesAt).toLocaleTimeString('zh-CN', { hour12: false })}（ETF 代理）`)
+            : null,
+          Number.isFinite(plan.basis) && plan.basis !== plan.value
+            ? h('span', { style: styles.chip }, `规划基数 ${money(plan.basis)}`)
+            : null,
+          plan.fundingMode === 'auto'
+            ? h('span', { style: styles.chip }, '资金来源：未持有→盈米宝，已持有→直接申购')
+            : null,
+        ),
+      )
+    }
+
     function PortfolioPanel() {
       const [state, load] = useSummary()
       const { at: quotesAt, byCode: quoteByCode } = useQuotes()
@@ -1301,6 +1506,14 @@ window.__ModuleLoader__.load({
                   'div',
                   null,
                   h(SummaryCards, { value }),
+                  plan ? h(TopDashboard, { plan, value, quotesAt }) : null,
+                  historyCode
+                    ? h(HistoryCard, {
+                        code: historyCode.code,
+                        name: historyCode.name,
+                        onClose: () => setHistoryCode(null),
+                      })
+                    : null,
                   value.generatedAt
                     ? h(
                         'div',
@@ -1372,81 +1585,6 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', style: styles.button, onClick: reload }, '重新读取'),
           ),
         ),
-        plan
-          ? h(
-              'div',
-              { style: styles.statusStrip },
-              h(
-                'span',
-                null,
-                `现金 ${money(plan.cash?.value)}（盈米宝 ${money(plan.cash?.spendable ?? 0)} 可投，目标 ${pct(plan.cash?.targetPct)}）`,
-              ),
-              h(
-                'span',
-                null,
-                plan.fundingMode === 'external'
-                  ? '资金来源：外部直接申购（不占用钱袋子）'
-                  : plan.fundingMode === 'auto'
-                    ? `资金：未持有用盈米宝 ${money(plan.cash?.spendable ?? 0)}，已持有直接申购`
-                    : `可动用弹药 ${money(plan.cash?.available ?? 0)}`,
-              ),
-              h('span', null, plan.building ? '建仓期：先买低配，不卖出' : '已建仓：可双向收敛'),
-              plan.basis && plan.basis !== plan.value
-                ? h(
-                    'span',
-                    { style: { color: color.brand } },
-                    `规划基数 ${money(plan.basis)}（当前 ${money(plan.value)}，${pct((plan.value / plan.basis) * 100)}）`,
-                  )
-                : plan.targetCapital && plan.targetCapital > plan.value
-                  ? h(
-                      'span',
-                      { style: { color: color.brand } },
-                      `目标规模 ${money(plan.targetCapital)}（当前 ${money(plan.value)}，${pct((plan.value / plan.targetCapital) * 100)}，新增资金按目标比例投入）`,
-                    )
-                  : null,
-              quotesAt
-                ? h(
-                    'span',
-                    { style: styles.faint },
-                    `实时参考 ${new Date(quotesAt).toLocaleTimeString('zh-CN', { hour12: false })}（ETF 代理价，非场外净值）`,
-                  )
-                : null,
-              value?.deployment
-                ? h('span', null, `已执行 ${value.deployment.doneRounds} 批（累计 ${money(value.deployment.submittedAmount)}，动态节奏）`)
-                : null,
-              value?.orders?.pending?.length
-                ? h('span', { style: { color: color.up } }, `待确认 ${value.orders.pending.length} 笔（合计 ${money(value.orders.pendingTotal)}）`)
-                : null,
-              value?.weekly
-                ? h(
-                    'span',
-                    {
-                      style: {
-                        color:
-                          value.weekly.suggestion === '提高' ? color.down : value.weekly.suggestion === '降低' ? color.up : color.text,
-                      },
-                    },
-                    `本周市场分析：${value.weekly.suggestion}节奏 → 目标 pace ${value.weekly.targetPacePct}%（${
-                      (value.weekly.reasons ?? [])[0] ?? ''
-                    }）`,
-                  )
-                : null,
-              plan.layers
-                ? h(
-                    'span',
-                    null,
-                    `两层结构：战略锚 ${pct(plan.layers.strategicPct)} ＋ 战术带 +${plan.layers.tacticalOverlayPp}pp（便宜才用）`,
-                  )
-                : null,
-              plan.dividend
-                ? h(
-                    'span',
-                    null,
-                    `红利 ${plan.dividend.current}% → 目标 ${plan.dividend.target}%（${plan.dividend.reason}）`,
-                  )
-                : null,
-            )
-          : null,
         value?.lastCheck
           ? h(
               'div',
@@ -1471,13 +1609,6 @@ window.__ModuleLoader__.load({
             )
           : null,
         checkView ? h(CheckResult, { data: checkView, onClose: () => setCheckView(null), onExecuted: load }) : null,
-        historyCode
-          ? h(HistoryCard, {
-              code: historyCode.code,
-              name: historyCode.name,
-              onClose: () => setHistoryCode(null),
-            })
-          : null,
         rebalanceView ? h(RebalanceResult, { data: rebalanceView, onClose: () => setRebalanceView(null) }) : null,
         body,
       )
