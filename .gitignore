@@ -1,0 +1,18 @@
+# 个人财务资料（不进公开仓库）
+/建仓计划-方案D.md
+/组合Review-*.md
+/组合模型Review-*.md
+/决策纪要-*.md
+/估值模型确认书.md
+/宏观周期分析-*.md
+/PLAN.md
+/操作手册-估值驱动.md
+/research/
+
+# 系统与临时文件
+.DS_Store
+*.bak
+*.bak-*
+/.install-backup-*/
+**/node_modules/
+**/.pnpm-store/

@@ -1,0 +1,19 @@
+# Portfolio bundle patch: one Host row.
+# The row id is what the profile's cordis.patch.yml targets when a user
+# overrides this plugin's config or switches it off.
+- insert:
+    - id: portfolio
+      name: '@local/dsh-plugin-portfolio'
+      config:
+        # Where holdings live. Omit to use
+        # <DSH_HOME>/storages/portfolio/portfolio.json.
+        # dataFile: '~/Documents/portfolio/portfolio.json'
+        staleAfterDays: 7
+        # Market data comes from an already-configured MCP server, not from a
+        # second connection: `refresh` calls mcp__<mcpServer>__<navTool>.
+        mcpServer: qieman
+        navTool: BatchGetFundNavHistory
+        # 0 = 不自动刷新；>0 时按小时定时刷新净值（需要 profile 挂 timer，基础 bundle 自带）
+        autoRefreshHours: 0
+        # 自动刷新成功后顺便记一条当天市值快照
+        autoSnapshot: false

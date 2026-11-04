@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Portfolio",
+    "description": "Book investment holdings, target weights and value snapshots; computes P&L, weights, concentration, drift and rebalance amounts for the agent."
+  }
+}
